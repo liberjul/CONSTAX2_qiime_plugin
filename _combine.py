@@ -1,0 +1,836 @@
+# -------------------------------------------------------------------------
+# Copyright (c) 2020-2022, JAL&GMNB&GMB
+#
+# Distributed under the terms of the MIT License.
+#
+# The full license in the file LICENSE, distributed with this software.
+# -------------------------------------------------------------------------
+
+import sys, os, itertools
+import pandas as pd
+
+def _reformat_RDP(rdp_file, output_dir, confidence, ranks):
+	input = open(rdp_file)
+	all_lines = input.readlines()
+	input.close()
+
+	output_file = F"{output_dir}/otu_taxonomy_rdp_final.txt"
+	output = open(output_file,"w")
+
+	if ranks[0] == "Kingdom":
+		output.write("OTU_ID\tOTU_Score\tKingdom\tK_score\tPhylum\tP_score\tClass\tC_score")
+		output.write("\tOrder\tO_score\tFamily\tF_score\tGenus\tG_score\tSpecies\tS_score\n")
+	else:
+		output.write("OTU_ID\tOTU_Score")
+		for r in ranks:
+			output.write(F"\t{r}\t{r.replace('ank_', '')}_score")
+		output.write("\n")
+
+	for i, line in enumerate(all_lines):
+		# capture confidence level at genus before altering line
+		temp = line.strip().split("\t")
+		confi = temp[7:-2][::3]
+		confi.append(temp[-1])
+		taxon = temp[5:][::3]
+
+		# remove any taxonomic levels after first "unidentified"
+		j=0
+		new_taxon = []
+		while j<len(taxon):
+			if	"ncertae_sedis" in taxon[j]:
+				taxon[j] = "Incertae_sedis"
+			if  "unidentified" in taxon[j] or float(confi[j])<confidence:
+				del confi[j:]
+				break
+			else: new_taxon.append(taxon[j].capitalize())
+			j+=1
+
+		# remove "_sp" species classifications
+		if ranks[0] == "Kingdom" and len(new_taxon)>0 and (" sp" in new_taxon[-1] or "_sp" in new_taxon[-1]):
+			del new_taxon[-1]
+			del confi[-1]
+		# remove terminal Incertae_sedis
+		while len(new_taxon)>0 and "ncertae_sedis" in new_taxon[-1]:
+			del new_taxon[-1]
+			del confi[-1]
+
+
+		if confi == []:
+			score = "NA"
+		else:
+			score = confi[-1]
+		tax_confi = ""
+		for k in range(len(new_taxon)):
+			tax_confi += F"\t{new_taxon[k]}\t{confi[k]}"
+
+		# iters = [iter(new_taxon), iter(confi)]
+		# tax_confi = list(str(it.next()) for it in itertools.cycle(iters))
+
+		# output.write(temp[0]+"\t"+score+"\t"+"\t".join(tax_confi)+"\n")
+		output.write(F"{temp[0]}\t{score}{tax_confi}\n")
+
+	output.close()
+	return output_file
+
+################################################################################
+def _reformat_UTAX(utax_file, output_dir, confidence, ranks):
+	input = open(utax_file)
+	all_lines = input.readlines()
+	input.close()
+
+	output_file = F"{output_dir}/otu_taxonomy_utax_final.txt"
+	output = open(output_file,"w")
+	if ranks[0] == "Kingdom":
+		output.write("OTU_ID\tOTU_Score\tKingdom\tK_score\tPhylum\tP_score\tClass\tC_score")
+		output.write("\tOrder\tO_score\tFamily\tF_score\tGenus\tG_score\tSpecies\tS_score\n")
+	else:
+		output.write("OTU_ID\tOTU_Score")
+		for r in ranks:
+			output.write(F"\t{r}\t{r.replace('ank_', '')}_score")
+		output.write("\n")
+
+	for i, line in enumerate(all_lines):
+		#remove unwanted third column and convert "(" and ")" to "*"
+		temp = line.replace("(", "*").replace(")","*").split()
+		line = temp[0]+"\t"+temp[1]
+
+		temp0 = line.split("*")
+		confid = temp0[1:][::2]
+		line2 = "".join(temp0[0:-2][::2])
+
+		temp1 = line2.split(",")
+		j=1
+		new_line = [temp1[0]]
+		while j<len(temp1):
+			if  "unidentified" in temp1[j] or float(confid[j-1]) < confidence:
+				del confid[j-1:]
+				break
+			else:
+				new_line.append(temp1[j])
+			j+=1
+
+		line2 = ",".join(new_line)
+
+		temp2 = line2.split(",")
+		# OTU_1328        d:Fungi, p:Ascomycota, c:Archaeorhizomycetes, o:Archaeorhizomycetales, f:Archaeorhizomycetaceae, g:Archaeorhizomyces, s:Archaeorhizomyces_sp
+		temp3 = temp2[0].split()
+		# OTU_1328, d:Fungi
+		temp4 = []
+		for item in temp2[1:]:
+			temp4.append(item[2:].capitalize())
+		# Ascomycota, Archaeorhizomycetes, Archaeorhizomycetales, Archaeorhizomycetaceae, Archaeorhizomyces, Archaeorhizomyces_sp
+
+		# remove "_sp" species classificaitons
+		if ranks[0] == "Kingdom" and len(temp4)>0 and temp4[-1].endswith("_sp"):
+			del temp4[-1]
+			del confid[-1]
+
+		# remove terminal Incertae_sedis
+		while len(temp4)>0 and "ncertae_sedis" in temp4[-1]:
+			del temp4[-1]
+			del confid[-1]
+
+		confid = [str(x) for x in confid]
+		if len(confid) > 0:
+			score = confid[-1]
+		else:
+			score = 0
+		if len(temp3) > 1:
+			final_line = F"{temp3[0]}\t{score}\t{temp3[1][2:].capitalize()}\tNA"
+			tax_confi = ""
+			for k in range(len(temp4)):
+				tax_confi += F"\t{temp4[k]}\t{confid[k]}"
+
+			output.write(F"{final_line+tax_confi}\n")
+		else:
+			tax_confi = '\t'.join([""]*len(ranks)*2)
+			output.write(F"{temp0[0]}\t{0.0000}\t{tax_confi}\n")
+
+	output.close()
+	return output_file
+
+################################################################################
+def _reformat_SINTAX(sintax_file, output_dir, confidence, ranks):
+	input = open(sintax_file)
+	all_lines = input.readlines()
+	input.close()
+
+	output_file = F"{output_dir}/otu_taxonomy_sintax_final.txt"
+	output = open(output_file, "w")
+	if ranks[0] == "Kingdom":
+		output.write("OTU_ID\tOTU_Score\tKingdom\tK_score\tPhylum\tP_score\tClass\tC_score")
+		output.write("\tOrder\tO_score\tFamily\tF_score\tGenus\tG_score\tSpecies\tS_score\n")
+	else:
+		output.write("OTU_ID\tOTU_Score")
+		for r in ranks:
+			output.write(F"\t{r}\t{r.replace('ank_', '')}_score")
+		output.write("\n")
+	for i, line in enumerate(all_lines):
+		# remove unwanted third column and convert "(" and ")" to "*"
+		# temp = line.replace("(", "*").replace(")","*").split("\t")
+		temp = line.split("\t")
+		ID = temp[0].split(" ")[0]
+		del temp[2:]
+		# temp =>  'OTU_999'	'd:Fungi*1.0000*,p:Ascomycota*1.0000*,c:Leotiomycetes*1.0000*,o:Helotiales*1.0000*,s:Helotiales_sp*1.0000*'
+		### NEW STUFF
+		temp0 = temp[1].split(",")
+		res = []
+		for x in temp0:
+			t = list(x)
+			if len(t) == 0:
+				break
+			t[-1] = "*"
+			t[-8] = "*"
+			res.append("".join(t))
+		if len(t) != 0:
+			temp0 = ",".join(res).split("*")[:-1]
+			### END NEW STUFF
+			# temp0 = temp[1].split("*")
+			# temp0 =>  'd:Fungi,' '1.0000' ',p:Ascomycota' '1.0000' ',c:Leotiomycetes' '1.0000' ',o:Helotiales' '1.0000' ',s:Helotiales_sp' '1.0000'
+			confid = temp0[1:][::2]
+			# confid =>  '1.0000' '1.0000' '1.0000' '1.0000' '1.0000'
+			temp_line = "".join(temp0[0:-2][::2])
+			# temp_line =>  "d:Fungi,p:Ascomycota,c:Leotiomycetes,o:Helotiales,s:Helotiales_sp"
+
+			# fix missing taxonomic levels
+			temp1 = temp_line.split(",")
+			# temp1 =>  'd:Fungi' 'p:Ascomycota' 'c:Leotiomycetes' 'o:Helotiales' 's:Helotiales_sp'
+			if ranks[0] == "Kingdom":
+				levels = ["d:", "k:", "p:", "c:", "o:", "f:", "g:", "s:"]
+				if len(temp1)<len(levels) and len(temp1) > 1:
+					if "g:" in temp1[-2]:
+						for k, level in enumerate(temp1):
+							if levels[k] not in temp1[k]:
+								temp1.insert(k, levels[k]+"Incertae_sedis")
+								confid.insert(k, 9)
+					else:
+						for k, level in enumerate(temp1):
+							if levels[k] not in temp1[k]:
+								temp1.insert(k, levels[k]+"unidentified")
+								confid.insert(k, 0)
+
+			j=0
+			temp2 = []
+			while j<len(temp1):
+				if  "unidentified" in temp1[j]:
+					del confid[j:]
+					break
+				elif confid[j]==9 and float(confid[j+1])<confidence:
+					del confid[j:]
+					break
+				elif float(confid[j])<confidence:
+					del confid[j:]
+					break
+				else:
+					temp2.append(temp1[j].capitalize())
+				j+=1
+
+			# remove "_sp" species classificaitons
+			if len(temp2)>0 and temp2[-1].endswith("_sp"):
+				del temp2[-1]
+				del confid[-1]
+			# remove terminal Incertae_sedis
+			while len(temp2)>0 and "Incertae_sedis" in temp2[-1]:
+				del temp2[-1]
+				del confid[-1]
+
+			confid = [str(x) if x!=9 else "NA" for x in confid]
+
+			new_taxonomy = []
+			for item in temp2:
+				new_taxonomy.append(item[2:].capitalize())
+
+			if confid == []:
+				score = "NA"
+			else:
+				score = confid[-1]
+
+			tax_confi = ""
+			for k in range(len(new_taxonomy)):
+				tax_confi += F"\t{new_taxonomy[k]}\t{confid[k]}"
+
+			output.write(F"{ID}\t{score}{tax_confi}\n")
+		else:
+			tax_confi = '\t'.join([""]*len(ranks)*2)
+			output.write(F"{ID}\t{0.0000}\t{tax_confi}\n")
+
+
+	output.close()
+	return output_file
+
+################################################################################
+def _reformat_BLAST(blast_file, output_dir, confidence, max_hits, ethresh, p_iden_thresh, ranks):
+	output_file = F"{output_dir}/otu_taxonomy_blast_final.txt" # Filename for output
+	if ranks[0] == "Kingdom":
+		classification_buf = "OTU_ID\tOTU_Score\tKingdom\tK_score\tPhylum\tP_score\tClass\tC_score"
+		classification_buf += "\tOrder\tO_score\tFamily\tF_score\tGenus\tG_score\tSpecies\tS_score\n"
+	else:
+		classification_buf = "OTU_ID\tOTU_Score"
+		for r in ranks:
+			classification_buf += F"\t{r}\t{r.replace('ank_', '')}_score"
+		classification_buf += "\n"
+
+	blast_res = pd.read_csv(blast_file) # Read the input csv
+	blast_res = blast_res.astype({"e_value" : "float64", "query" : "str"})
+	uniq = pd.unique(blast_res["query"]) # List of all otus
+	for q in uniq:
+		q_list = [q.split(" ")[0], "0.0"] # OTU and placeholder confidence
+		q_sub = blast_res[(blast_res["query"] == q) & (blast_res["e_value"] <= ethresh) & (blast_res["percent_identity"] >= p_iden_thresh)] # Subset by OTU and e_values
+		if len(q_sub) == 0:
+			q_list.extend([""]*len(ranks)*2)
+		else:
+			q_sub = q_sub[:min([len(q_sub), max_hits])] # Take all hits or up to max_hits
+			for t in ranks:
+				if t not in q_sub.columns and t == "Kingdom":
+					t = "Domain"
+				vcs = q_sub[t].value_counts(normalize = True)
+				if len(vcs) == 0 or "unidentified" in vcs.index[0] or vcs[0] < confidence or (t == ranks[-1] and vcs.index[0].endswith("_sp")): # If unidentified, under conf thresh, or a species with "_sp", break
+				    break
+				else:
+					if "ncertae_sedis" in vcs.index[0]:
+					    q_list.extend(["Incertae_sedis", str(vcs[0])])
+					else:
+						q_list.extend([vcs.index[0], str(vcs[0])])
+					q_list[1] = str(vcs[0])
+		classification_buf += "\t".join(q_list) + "\n"
+	with open(output_file, "w") as ofile:
+	    ofile.write(classification_buf)
+	return output_file
+
+################################################################################
+def _build_iso_hl_dict(blast_outfile, hl_qc=75, hl_id=0, iso_qc=75, iso_id=0, hl=False, hl_fmt="UNITE"):
+	hit_dict = {}
+	with open(blast_outfile, "r") as ifile:
+		line = ifile.readline()
+		while line != "":
+			if "# Query: " in line: # Checking if hits were found
+				quer = line.strip().split("Query: ")[1]
+				line = ifile.readline()
+				line = ifile.readline()
+				if line == "# 0 hits found\n": # If no hits found
+					hit_dict[quer] = ["", "0", "0"]
+			elif line[0] != "#": # BLAST hit lines
+				spl = line.strip().split("\t")
+				if hl:
+					if int(float(spl[5])) >= hl_qc and int(float(spl[4])) >= hl_id:
+						subj = spl[1]
+						if hl_fmt == "UNITE":
+							subj = subj.split("k__")[1].split(";")[0]
+						elif hl_fmt == "SILVA":
+							if "_Eukaryota;" in subj:
+								subj = subj.split("_")[1].split(";")[0:9]
+								subj = ";".join(subj)
+							elif "Mitochondria" in subj:
+								subj = "Mitochondria"
+							elif "Chloroplast" in subj:
+								subj = "Chloroplast"
+							else:
+								subj = "_".join(subj.split("_")[1].split(";")[0:2])
+						hit_dict[spl[0]] = [subj, spl[4], spl[5]]
+					else:
+						hit_dict[spl[0]] = ["", "0", "0"]
+				elif int(float(spl[5])) >= iso_qc and int(float(spl[4])) >= iso_id:
+					hit_dict[spl[0]] = [spl[1], spl[4], spl[5]]
+				else:
+					hit_dict[spl[0]] = ["", "0", "0"]
+			line = ifile.readline()
+	return hit_dict
+
+################################################################################
+def _build_dict(filename, ranks):
+	file = open(filename, "r")
+	all_lines = file.readlines()
+	file.close()
+
+	dict = {}
+	for i, line in enumerate(all_lines[1:]):
+		temp = line.replace(" ", "_").strip().split()
+		dict[temp[0]] = []
+		if len(temp)>2:
+			dict[temp[0]]=temp[2:]
+		if len(dict[temp[0]])<len(ranks)*2:
+			while len(dict[temp[0]])<len(ranks)*2:
+				dict[temp[0]].append("")
+		# strip numbers from species identifications
+		species = "".join(
+						list(
+							filter(lambda c: not c.isdigit(), dict[temp[0]][-2])))
+		dict[temp[0]][-2] = species.replace("_"," ")
+	return dict
+
+################################################################################
+def _real_hier(filename):
+	taxa_set = set()
+	with open(filename, "r") as ifile:
+		line = ifile.readline()
+		line = ifile.readline()
+		while line != "":
+			trim_line = line.strip().split("\t")[1:]
+			taxa_set.add(trim_line[0])
+			entry = "\t".join(trim_line)
+			if "_sp." in entry or "_sp_" in entry:
+				entry = entry.split("_sp")[0] + "_sp"
+			if "ncertae_sedis" in entry:
+				spl = entry.split("\t")
+				spl = ["Incertae_sedis" if "ncertae_sedis" in x else x for x in spl]
+				entry = "\t".join(spl)
+			while entry not in taxa_set:
+				taxa_set.add(entry)
+				trim_line = trim_line[:-1]
+				entry = "\t".join(trim_line)
+				if "_sp." in entry or "_sp_" in entry:
+					entry = entry.split("_sp")[0] + "_sp"
+				if "ncertae_sedis" in entry:
+					spl = entry.split("\t")
+					spl = ["Incertae_sedis" if "ncertae_sedis" in x else x for x in spl]
+					entry = "\t".join(spl)
+			line = ifile.readline()
+	return taxa_set
+
+################################################################################
+def _vote(cla1, cla2, cla3, conservative):
+	winner = ""
+	taxa = [cla1[0].replace("NA", ""), cla2[0].replace("NA", ""), cla3[0].replace("NA", "")]
+	scores = [cla1[1], cla2[1], cla3[1]]
+	tally = ["0","0","0"]
+	duplicates_notempty = [i for i, x in enumerate(taxa) if x!= "" and taxa.count(x) > 1]
+	unique_2empty = [i for i, x in enumerate(taxa) if x!="" and taxa.count("") > 1]
+	unique = [i for i, x in enumerate(taxa) if x!="" and taxa.count("") == 1]
+	for j in range(0,3):
+		if taxa[j]!="":
+			if j in duplicates_notempty:
+				winner = taxa[j]
+				break
+			elif j in unique_2empty:
+				if conservative:
+					winner = ""
+				else:
+					winner = taxa[j]
+				break
+			elif j in unique:
+				scores = [float(x) if x!="NA" and x!="" else 0 for x in scores]
+				winner = taxa[scores.index(max([scores[x] for x in unique]))]
+		else:
+			winner = taxa[j]
+	return winner
+
+################################################################################
+def _count_classifications(filenames, output_dir, format, rank_count, use_blast=False):
+	# rdp, utax, sintax, consensus OR
+	# rdp, sintax, blast, consensus
+	file_num = 0
+	unique_dict = {}
+	for i in range(rank_count):
+		unique_dict[i] = {}
+	for i, file in enumerate(filenames):
+		input = open(file, "r")
+		all_lines = input.readlines()
+		input.close()
+		count_y = [0]*rank_count
+		count_n = [0]*rank_count
+		output1 = open(F"{output_dir}/otu_taxonomy_CountClassified.txt", "w")
+		if i<3:	#first 3 files have scores
+			start= 2
+			freq = 2
+		else: 	#consensus file does not have scores
+			start= 1
+			freq = 1
+		for j, line in enumerate(all_lines[1:]):
+			temp = line.strip().split("\t")
+			taxonomy = temp[start::freq]
+			if len(taxonomy)==rank_count:
+				# strip numbers from species identifications
+				species = "".join(list(filter(lambda c: not c.isdigit(), taxonomy[-1])))
+				taxonomy[-1] = species.replace("_"," ").strip()
+
+			for k in range(0,rank_count):
+				if k<len(taxonomy):
+					count_y[k]+=1
+					if taxonomy[k] not in unique_dict[k]:
+						unique_dict[k][taxonomy[k]] = [0,0,0,0]
+						unique_dict[k][taxonomy[k]][file_num]+= 1
+					else:
+						unique_dict[k][taxonomy[k]][file_num]+= 1
+				else:
+					taxonomy.append("Unidentified")
+					count_n[k]+=1
+					if taxonomy[k] not in unique_dict[k]:
+						unique_dict[k][taxonomy[k]] = [0,0,0,0]
+						unique_dict[k][taxonomy[k]][file_num]+= 1
+					else:
+						unique_dict[k][taxonomy[k]][file_num]+= 1
+
+
+		for l, level in enumerate(count_y):
+			count_y[l] = str(level)
+		for m, level in enumerate(count_n):
+			count_n[m] = str(level)
+		if format == "UNITE":
+			output1.write("\tKingdom\tPhylum\tClass\tOrder\tFamily\tGenus\tSpecies\n")
+		else:
+			output1.write("\t" + "\t".join([F'Rank_{x}' for x in range(1,rank_count+1)])+ "\n")
+		output1.write("Classified\t"+"\t".join(count_y)+"\n")
+		output1.write("Unclassified\t"+"\t".join(count_n) + "\n")
+		output1.close()
+		file_num+=1
+	output2 = open(F"{output_dir}/Classification_Summary.txt", "w")
+	if use_blast:
+		output2.write("Classification\tRDP\tBLAST\tSINTAX\tCONSTAX\n")
+	else:
+		output2.write("Classification\tRDP\tSINTAX\tUTAX\tCONSTAX\n")
+	for l in range(0, rank_count):
+		key_list = list(unique_dict[l].keys())
+		key_list.sort()
+		if key_list[0].isspace():
+			for c in range(len(unique_dict[l]["Unidentified"])):
+				unique_dict[l]["Unidentified"][c] += unique_dict[l][key_list[0]][c]
+			key_list = key_list[1:]
+		for key in key_list:
+			output2.write(key+"\t"+"\t".join(str(x) for x in unique_dict[l][key])+"\n")
+	output2.close()
+
+################################################################################
+
+def _combine_taxonomy(output_dir, conf, tax, evalue, mhits, p_iden, format, db, tf, isolates, iso_qc, iso_id, hl, hl_qc, hl_id, conservative, consistent, blast=True):
+    three_classifiers = ["rdp", "sintax", "blast"]
+    if format == "UNITE":
+    	filename = db
+    	filename_base = tf + "/" + ".".join(os.path.basename(filename).split(".")[:-1])
+
+    	header_line = open(filename_base + "__RDP_taxonomy.txt", "r").readline()
+    	ranks = header_line.strip().split("\t")[1:]
+    	if consistent:
+    		taxa_set = _real_hier(filename_base + "__RDP_taxonomy.txt")
+    	for classifier in three_classifiers:
+    		file_name = F"{tax}otu_taxonomy."+classifier
+    		try:
+    			open(file_name,"r")
+    		except FileNotFoundError:
+    			raise FileNotFoundError(F"{classifier.upper()} file could not be opened.")
+    		input_file = open(file_name,"r")
+    		line = input_file.readline()
+    		temp0 = line.split("\t")
+    		if classifier == "rdp":
+    			if len(temp0)==0:
+    				raise ValueError("RDP file is empty. Did you allot enough memory with --mem?")
+    			elif len(temp0)<10 or temp0[3]!="rootrank":
+    				raise ValueError("Input file not in RDP format. Please Reformat As Below:\nOTU_###	_	Root	rootrank	1.0	Fungi	Kingdom	0.98	Zygomycota	Phylum	0.05	Zygomycota_Incertae_sedis	Class	0.05	Mucorales	Order	0.04	Syncephalastraceae	Family	0.01	Fennellomyces	Genus	0.01	Fennellomyces linderi	Species	0.01")
+    		elif classifier == "utax":
+    			while "+" not in line and "-" not in line and line != "":
+    				line = input_file.readline()
+    			if line == "":
+    				raise ValueError("Input file not in UTAX format. Please Reformat As Below:\nOTU_###	d:Fungi,p:Ascomycota(0.9700),c:Pezizomycetes(0.8000),o:Pezizales(0.7900),f:Sarcosomataceae(0.7700),g:Pseudoplectania(0.3700),s:Pseudoplectania_nigrella(0.3700)	+	d:Fungi,p:Ascomycota,c:Pezizomycetes")
+    		elif classifier == "blast":
+    			if "query,subject,bitscore,e_value,percent_identity,query_coverage" not in temp0[0]:
+    				raise ValueError("Input file not in BLAST format. Please Reformat As Below:\nquery,subject,bitscore,e_value,percent_identity,query_coverage,kingdom,phylum,class,order,family,genus,species")
+    		else:
+    			while "+" not in line and "-" not in line and line != "":
+    				line = input_file.readline()
+    			if line == "":
+    				raise ValueError("Input file not in SINTAX format. Please Reformat As Below:\nOTU_###	d:Fungi(1.0000),p:Ascomycota(0.9700),c:Pezizomycetes(0.8000),o:Pezizales(0.7900),f:Sarcosomataceae(0.7700),g:Pseudoplectania(0.3700),s:Pseudoplectania_nigrella(0.3700)	+	d:Fungi,p:Ascomycota,c:Pezizomycetes")
+
+    		input_file.close()
+
+    		if classifier == "rdp":
+    			print("\n____________________________________________________________________\nReformatting "+classifier.upper()+" file\n")
+    			rdp_file = _reformat_RDP(file_name, output_dir, conf, ranks)
+    			rdp_dict = _build_dict(rdp_file, ranks)
+    		elif classifier == "utax":
+    			print("\nReformatting "+classifier.upper()+" file\n")
+    			uta_file = _reformat_UTAX(file_name, output_dir, conf, ranks)
+    			uta_dict = _build_dict(uta_file, ranks)
+    		elif classifier == "blast":
+    			print("\nReformatting "+classifier.upper()+" file\n")
+    			blast_file = _reformat_BLAST(file_name, output_dir, conf, max_hits=mhits, ethresh=evalue, p_iden_thresh=p_iden, ranks=ranks)
+    			blast_dict = _build_dict(blast_file, ranks)
+    		else:
+    			print("\nReformatting "+classifier.upper()+" file\n")
+    			sin_file = _reformat_SINTAX(file_name, output_dir, conf, ranks)
+    			sin_dict = _build_dict(sin_file, ranks)
+    		print("\tDone\n")
+    	if isolates == "True":
+    		print("\nReformatting isolate result file\n")
+    		iso_dict = _build_iso_hl_dict(F"{tax}/isolates_blast.out", iso_qc=iso_qc, iso_id=iso_id)
+    		print("\tDone\n")
+    	if hl != "null":
+    		print("\nReformatting high level tax result file\n")
+    		print(F"User set query coverage minimum: {hl_qc} User set percent identity minimum: {hl_id}")
+    		hl_dict = _build_iso_hl_dict(F"{tax}/hl_blast.out", hl=True, hl_fmt=hl, hl_qc=hl_qc, hl_id=hl_id)
+    		print("\tDone\n")
+    	print("\nGenerating consensus taxonomy & combined taxonomy table\n")
+    	consensus_file = F"{output_dir}/constax_taxonomy.txt"
+    	consensus = open(consensus_file, "w")
+    	if isolates == "True":
+    		consensus.write("OTU_ID\tKingdom\tPhylum\tClass\tOrder\tFamily\tGenus\tSpecies\tIsolate\tIsolate_percent_id\tIsolate_query_cover")
+    	else:
+    		consensus.write("OTU_ID\tKingdom\tPhylum\tClass\tOrder\tFamily\tGenus\tSpecies")
+    	if hl != "null":
+    		consensus.write("\tHigh_level_taxonomy\tHL_hit_percent_id\tHL_hit_query_cover")
+    	if consistent:
+    		consensus.write("\tConsistent_hierarchy\n")
+    	else:
+    		consensus.write("\n")
+    	if blast:
+    		combined = open(F"{output_dir}/combined_taxonomy.txt", "w")
+    		combined.write("OTU_ID\tKingdom_RDP\tKingdom_BLAST\tKingdom_SINTAX\tKingdom_Consensus\tPhylum_RDP\tPhylum_BLAST\tPhylum_SINTAX")
+    		combined.write("\tPhylum_Consensus\tClass_RDP\tClass_BLAST\tClass_SINTAX\tClass_Consensus\tOrder_RDP\tOrder_BLAST\tOrder_SINTAX")
+    		combined.write("\tOrder_Consensus\tFamily_RDP\tFamily_BLAST\tFamily_SINTAX\tFamily_Consensus\tGenus_RDP\tGenus_BLAST\tGenus_SINTAX")
+    		combined.write("\tGenus_Consensus\tSpecies_RDP\tSpecies_BLAST\tSpecies_SINTAX\tSpecies_Consensus\n")
+
+    		for otu in rdp_dict.keys():
+    			consensus.write(otu+"\t")
+    			combined.write(otu)
+    			levels = []
+    			for m in range(0,len(ranks)*2,2):
+    				level = _vote(rdp_dict[otu][m:m+2], blast_dict[otu][m:m+2], sin_dict[otu][m:m+2], conservative)
+    				combined.write("\t"+rdp_dict[otu][m]+"\t"+blast_dict[otu][m]+"\t"+sin_dict[otu][m]+"\t")
+    				if level != "":
+    					levels.append(level)
+    				combined.write(level)
+    			levels_clean = []
+    			for x in levels:
+    				if "ncertae_sedis" in x:
+    					levels_clean.append("")
+    				else:
+    					levels_clean.append(x)
+    			consensus.write('\t'.join(levels_clean+[""]*(len(ranks)-len(levels_clean))))
+    			if isolates == "True":
+    				consensus.write(F"\t{iso_dict[otu][0]}\t{iso_dict[otu][1]}\t{iso_dict[otu][2]}")
+    			if hl != "null":
+    				consensus.write(F"\t{hl_dict[otu][0]}\t{hl_dict[otu][1]}\t{hl_dict[otu][2]}")
+    			if consistent:
+    				tax_string = '\t'.join(levels_clean)
+    				consensus.write(F"\t{int(tax_string.replace(' ', '_').strip('_') in taxa_set)}\n")
+    			else:
+    				consensus.write("\n")
+    			combined.write("\n")
+    		print("\tDone\n")
+
+    		consensus.close()
+    		combined.close()
+
+
+    		print("\nGenerating classification counts & summary table\n")
+    		_count_classifications([rdp_file, sin_file, blast_file, consensus_file], output_dir, "UNITE", len(ranks), use_blast=True)
+    	else:
+    		combined = open(F"{output_dir}/combined_taxonomy.txt", "w")
+    		combined.write("OTU_ID\tKingdom_RDP\tKingdom_SINTAX\tKingdom_UTAX\tKingdom_Consensus\tPhylum_RDP\tPhylum_SINTAX\tPhylum_UTAX")
+    		combined.write("\tPhylum_Consensus\tClass_RDP\tClass_SINTAX\tClass_UTAX\tClass_Consensus\tOrder_RDP\tOrder_SINTAX\tOrder_UTAX")
+    		combined.write("\tOrder_Consensus\tFamily_RDP\tFamily_SINTAX\tFamily_UTAX\tFamily_Consensus\tGenus_RDP\tGenus_SINTAX\tGenus_UTAX")
+    		combined.write("\tGenus_Consensus\tSpecies_RDP\tSpecies_SINTAX\tSpecies_UTAX\tSpecies_Consensus\n")
+
+    		for otu in rdp_dict.keys():
+    			consensus.write(otu+"\t")
+    			combined.write(otu)
+    			levels = []
+    			for m in range(0,len(ranks)*2,2):
+    				level = _vote(rdp_dict[otu][m:m+2], sin_dict[otu][m:m+2], uta_dict[otu][m:m+2], conservative)
+    				combined.write("\t"+rdp_dict[otu][m]+"\t"+sin_dict[otu][m]+"\t"+uta_dict[otu][m]+"\t")
+    				if level != "":
+    					levels.append(level)
+    				combined.write(level)
+    			levels_clean = []
+    			for x in levels:
+    				if "ncertae_sedis" in x:
+    					levels_clean.append("")
+    				else:
+    					levels_clean.append(x)
+    			consensus.write('\t'.join(levels_clean+[""]*(len(ranks)-len(levels_clean))))
+    			if isolates == "True":
+    				consensus.write(F"\t{iso_dict[otu][0]}\t{iso_dict[otu][1]}\t{iso_dict[otu][2]}")
+    			if hl != "null":
+    				consensus.write(F"\t{hl_dict[otu][0]}\t{hl_dict[otu][1]}\t{hl_dict[otu][2]}")
+    			if consistent:
+    				tax_string = '\t'.join(levels_clean)
+    				consensus.write(F"\t{int(tax_string.replace(' ', '_').strip('_') in taxa_set)}\n")
+    			else:
+    				consensus.write("\n")
+    			combined.write("\n")
+    		print("\tDone\n")
+
+    		consensus.close()
+    		combined.close()
+
+
+    		print("\nGenerating classification counts & summary table\n")
+    		_count_classifications([rdp_file, uta_file, sin_file, consensus_file], output_dir, "UNITE", len(ranks))
+    	print("\tDone\n\n")
+    	print("____________________________________________________________________\n")
+    else:
+    	filename = db
+    	filename_base = tf + "/" + ".".join(os.path.basename(filename).split(".")[:-1])
+
+    	header_line = open(filename_base + "__RDP_taxonomy.txt", "r").readline() # Extract first line of taxonomy file to get ranks
+    	ranks = header_line.strip().split("\t")[1:]
+    	if consistent:
+    		taxa_set = _real_hier(filename_base + "__RDP_taxonomy.txt")
+    	for classifier in three_classifiers:
+    		file_name = F"{tax}otu_taxonomy."+classifier
+    		try:
+    			open(file_name,"r")
+    		except FileNotFoundError:
+    			raise FileNotFoundError(F"{classifier.upper()} file could not be opened.")
+    		input_file = open(file_name,"r")
+    		line = input_file.readline()
+    		temp0 = line.split("\t")
+    		if classifier == "rdp":
+    			if len(temp0)==0:
+    				raise ValueError("RDP file is empty. Did you allot enough memory with --mem?")
+    			elif len(temp0)<10 or temp0[3]!="rootrank":
+    				raise ValueError("Input file not in RDP format. Please Reformat As Below:\nOTU_###	Root	rootrank	1.0	Bacteria_1	Rank_1	1.0	Firmicutes_1	Rank_2	1.0	Bacilli_1	Rank_3	1.0	Bacillales_1	Rank_4	0.8	Bacillaceae_1	Rank_5	0.8	Bacillus_1	Rank_6	0.8	Bacillus_pumilus_1	Rank_7	0.8")
+    		elif classifier == "utax":
+    			while not temp0[1].startswith("R1:") and line != "":
+    				line = input_file.readline()
+    				temp0 = line.split("\t")
+    			if line == "":
+    				raise ValueError("Input file not in UTAX format. Please Reformat As Below:\nOTU_###	d:Bacteria_1(1.0000),k:Firmicutes_1(1.0000),p:Bacilli_1(0.9600),c:Bacillales_1(0.7200),o:Bacillaceae_1(0.7200),f:Bacillus_1(0.7200),g:Bacillus_pumilus_1(0.7200)	+	d:Bacteria_1,k:Firmicutes_1,p:Bacilli_1")
+    		elif classifier == "blast":
+    			if "query,subject,bitscore,e_value,percent_identity,query_coverage" not in temp0[0]:
+    				raise ValueError("Input file not in BLAST format. Please Reformat As Below:\nquery,subject,bitscore,e_value,percent_identity,query_coverage,Rank_1,Rank_2,Rank_3,Rank_4,Rank_5,Rank_6,Rank_7")
+    		else:
+    			if temp0[1].startswith("R1:"):
+    				raise ValueError("Input file not in SINTAX format. Please Reformat As Below:\nOTU_###	d:Bacteria_1(1.0000),k:Firmicutes_1(1.0000),p:Bacilli_1(0.9600),c:Bacillales_1(0.7200),o:Bacillaceae_1(0.7200),f:Bacillus_1(0.7200),g:Bacillus_pumilus_1(0.7200)	+	d:Bacteria_1,k:Firmicutes_1,p:Bacilli_1")
+    		input_file.close()
+
+    		if classifier == "rdp":
+    			print("\n____________________________________________________________________\nReformatting "+classifier.upper()+" file\n")
+    			rdp_file = _reformat_RDP(file_name, output_dir, conf, ranks)
+    			rdp_dict = _build_dict(rdp_file, ranks)
+    		elif classifier == "utax":
+    			print("\nReformatting "+classifier.upper()+" file\n")
+    			uta_file = _reformat_UTAX(file_name, output_dir, conf, ranks)
+    			uta_dict = _build_dict(uta_file, ranks)
+    		elif classifier == "blast":
+    			print("\nReformatting "+classifier.upper()+" file\n")
+    			blast_file = _reformat_BLAST(file_name, output_dir, conf, max_hits=mhits, ethresh=evalue, p_iden_thresh=p_iden, ranks=ranks)
+    			blast_dict = _build_dict(blast_file, ranks)
+    		else:
+    			print("\nReformatting "+classifier.upper()+" file\n")
+    			sin_file = _reformat_SINTAX(file_name, output_dir, conf, ranks)
+    			sin_dict = _build_dict(sin_file, ranks)
+    		print("\tDone\n")
+    	if isolates == "True":
+    		print("\nReformatting isolate result file\n")
+    		iso_dict = _build_iso_hl_dict(F"{tax}/isolates_blast.out", iso_qc=iso_qc, iso_id=iso_id)
+    		print("\tDone\n")
+    	if hl != "null":
+    		print("\nReformatting high level tax result file\n")
+    		print(F"User set query coverage minimum: {hl_qc} User set percent identity minimum: {hl_id}")
+    		hl_dict = _build_iso_hl_dict(F"{tax}/hl_blast.out", hl=True, hl_fmt=hl, hl_qc=hl_qc, hl_id=hl_id)
+    		print("\tDone\n")
+    	print("\nGenerating consensus taxonomy & combined taxonomy table\n")
+    	consensus_file = F"{output_dir}/constax_taxonomy.txt"
+    	consensus = open(consensus_file, "w")
+
+    	combined = open(F"{output_dir}/combined_taxonomy.txt", "w")
+    	combined.write("OTU_ID")
+    	consensus.write("OTU_ID")
+
+    	if blast:
+    		for r in ranks:
+    			combined.write(F"\t{r}_RDP\t{r}_BLAST\t{r}_SINTAX\t{r}_Consensus")
+    			consensus.write(F"\t{r}")
+    		if isolates == "True":
+    			consensus.write("\tIsolate\tIsolate_percent_id\tIsolate_query_cover")
+    		if hl != "null":
+    			consensus.write("\tHigh_level_taxonomy\tHL_hit_percent_id\tHL_hit_query_cover")
+    		if consistent:
+    			consensus.write("\tConsistent_hierarchy")
+    		consensus.write("\n")
+    		combined.write("\n")
+
+    		for otu in rdp_dict.keys():
+    			consensus.write(otu+"\t")
+    			combined.write(otu)
+    			levels = []
+    			for m in range(0,len(ranks)*2,2):
+    				level = _vote(rdp_dict[otu][m:m+2], blast_dict[otu][m:m+2], sin_dict[otu][m:m+2], conservative)
+    				combined.write("\t"+rdp_dict[otu][m]+"\t"+blast_dict[otu][m]+"\t"+sin_dict[otu][m]+"\t")
+    				if level != "":
+    					levels.append(level)
+    				combined.write(level)
+    			levels_clean = []
+    			for x in levels:
+    				if "ncertae_sedis" in x:
+    					levels_clean.append("")
+    				else:
+    					levels_clean.append(x)
+    			consensus.write('\t'.join(levels_clean+[""]*(len(ranks)-len(levels_clean))))
+    			if isolates == "True":
+    				consensus.write(F"\t{iso_dict[otu][0]}\t{iso_dict[otu][1]}\t{iso_dict[otu][2]}")
+    			if hl != "null":
+    				consensus.write(F"\t{hl_dict[otu][0]}\t{hl_dict[otu][1]}\t{hl_dict[otu][2]}")
+    			if consistent:
+    				tax_string = '\t'.join(levels_clean)
+    				consensus.write(F"\t{int(tax_string in taxa_set)}\n")
+    			else:
+    				consensus.write("\n")
+    			combined.write("\n")
+    		print("\tDone\n")
+
+    		consensus.close()
+    		combined.close()
+
+
+    		print("\nGenerating classification counts & summary table\n")
+    		_count_classifications([rdp_file, sin_file, blast_file, consensus_file], output_dir, "SILVA", len(ranks), use_blast=True)
+    	else:
+    		combined = open(F"{output_dir}/combined_taxonomy.txt", "w")
+    		filename = db
+    		filename_base = tf + "/" + ".".join(os.path.basename(filename).split(".")[:-1])
+
+    		header_line = open(filename_base + "__RDP_taxonomy.txt", "r").readline()
+    		ranks = header_line.strip().split("\t")[1:]
+    		combined.write("OTU_ID")
+    		consensus.write("OTU_ID")
+
+    		for r in ranks:
+    			combined.write(F"\t{r}_RDP\t{r}_SINTAX\t{r}_UTAX\t{r}_Consensus")
+    			consensus.write(F"\t{r}")
+    		if isolates == "True":
+    			consensus.write("\tIsolate\tIsolate_percent_id\tIsolate_query_cover")
+    		if hl != "null":
+    			consensus.write("\tHigh_level_taxonomy\tHL_hit_percent_id\tHL_hit_query_cover")
+    		if consistent:
+    			consensus.write("\tConsistent_hierarchy")
+    		combined.write("\n")
+    		consensus.write("\n")
+
+    		for otu in rdp_dict.keys():
+    			consensus.write(otu+"\t")
+    			combined.write(otu)
+    			levels = []
+    			for m in range(0,len(ranks)*2,2):
+    				level = _vote(rdp_dict[otu][m:m+2], sin_dict[otu][m:m+2], uta_dict[otu][m:m+2], conservative)
+    				combined.write("\t"+rdp_dict[otu][m]+"\t"+sin_dict[otu][m]+"\t"+uta_dict[otu][m]+"\t")
+    				if level != "":
+    					levels.append(level)
+    				combined.write(level)
+    			levels_clean = []
+    			for x in levels:
+    				if "ncertae_sedis" in x:
+    					levels_clean.append("")
+    				else:
+    					levels_clean.append(x)
+    			consensus.write('\t'.join(levels_clean+[""]*(len(ranks)-len(levels_clean))))
+    			if isolates == "True":
+    				consensus.write(F"\t{iso_dict[otu][0]}\t{iso_dict[otu][1]}\t{iso_dict[otu][2]}")
+    			if hl != "null":
+    				consensus.write(F"\t{hl_dict[otu][0]}\t{hl_dict[otu][1]}\t{hl_dict[otu][2]}")
+    			if consistent:
+    				tax_string = '\t'.join(levels_clean)
+    				consensus.write(F"\t{int(tax_string in taxa_set)}\n")
+    			else:
+    				consensus.write("\n")
+    			combined.write("\n")
+    		print("\tDone\n")
+
+    		consensus.close()
+    		combined.close()
+
+
+    		print("\nGenerating classification counts & summary table\n")
+    		_count_classifications([rdp_file, uta_file, sin_file, consensus_file], output_dir, "SILVA", len(ranks))
+    	print("\tDone\n\n")
+    	print("____________________________________________________________________\n")
+		return pd.read_table(consensus_file)
