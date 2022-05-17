@@ -10,12 +10,12 @@ from qiime2.plugin import Plugin, Citations
 
 import CONSTAX2_qiime_plugin
 
-citations = Citations.load('citations.bib', package='q2_CONSTAX2')
+citations = Citations.load('citations.bib', package='CONSTAX2_qiime_plugin')
 plugin = Plugin(
     name='CONSTAX2',
-    version=q2_CONSTAX2.__version__,
-    website='https://github.com/liberjul/q2_CONSTAX2',
-    package='q2_CONSTAX2',
+    version=CONSTAX2_qiime_plugin.__version__,
+    website='https://github.com/liberjul/CONSTAX2_qiime_plugin',
+    package='CONSTAX2_qiime_plugin',
     description=('This QIIME 2 plugin provides consensus'
                 'taxonomic classification using SINTAX,'
                 'RDP, and BLAST classifiers.'),

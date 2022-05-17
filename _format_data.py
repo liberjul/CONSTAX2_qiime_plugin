@@ -10,7 +10,7 @@
 
 import sys, os, unicodedata, argparse, glob, time
 import numpy as np
-from ._lineage import lin_to_tax, add_full_lineage, convert_lines
+from ._lineage import _lin_to_tax, _add_full_lineage, _convert_lines
 
 def _detect_format(db):
     with open(db, "r") as ifile:
@@ -146,8 +146,8 @@ def _format_ref_db(db, tf, format, dup=False):
     os.remove(F"{filename_base}__RDP_taxonomy_trained.txt")
     os.remove(F"{filename_base}__RDP_taxonomy_headers.txt")
 
-    lin_to_tax(filename_base, format, dup)
-    add_full_lineage(filename_base, format)
+    _lin_to_tax(filename_base, format, dup)
+    _add_full_lineage(filename_base, format)
 
     print("Database formatting complete\n____________________________________________________________________\n\n")
 
@@ -164,7 +164,7 @@ def _check_seq(seq, input_file, otu_name):
         return out_seq
 
 def _check_input_names(input, name="", filter=False):
-    convert_lines_vec = np.vectorize(convert_lines)
+    convert_lines_vec = np.vectorize(_convert_lines)
     rec_dict={}
     with open(input, "r", encoding='utf-8') as ifile:
         line = ifile.readline()
@@ -185,7 +185,7 @@ def _check_input_names(input, name="", filter=False):
     rec_array = np.array(list(rec_dict.items()))
     rec_hash = {}
     for i in range(rec_array.shape[0]):
-        rec_hash[i] = convert_lines(rec_array[i], filter=filter, input_name=input)
+        rec_hash[i] = _convert_lines(rec_array[i], filter=filter, input_name=input)
 
     buffer = "".join(rec_hash.values())
     with open(fname, "w") as ofile:

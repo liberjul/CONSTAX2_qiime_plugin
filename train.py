@@ -5,49 +5,86 @@
 #
 # The full license in the file LICENSE, distributed with this software.
 # -------------------------------------------------------------------------
-import subprocess
+import subprocess, os, json
+
 from q2_types.feature_data import (FeatureData, Taxonomy, Sequence, DNAIterator, DNAFASTAFormat)
-from qiime2.plugin import Int, Str, Float, Choices, Range
+from qiime2.plugin import Int, Str, Float, Choices, Range, TextFileFormat
+import qiime2.plugin.model as model
 from .plugin_setup import plugin, citations
 from ._format_data import _format_ref_db, _detect_format
 
+# https://github.com/qiime2/q2-types/issues/49
+# From https://github.com/qiime2/q2-feature-classifier/blob/master/q2_feature_classifier/_taxonomic_classifier.py
+class JSONFormat(model.TextFileFormat):
+    def sniff(self):
+        with self.open() as fh:
+            try:
+                json.load(fh)
+                return True
+            except json.JSONDecodeError:
+                pass
+        return False
 
-#python "$CONSTAXPATH"/FormatRefDB.py -d "$DB" -t "$TFILES" -f $FORMAT -p "$CONSTAXPATH"
-format = _detect_format(db)
-_format_ref_db(db, tfiles, format, dup=False)
+def train(db, tf, mem) -> dict:
+    training_dict = {'sintax_database' : F'{tf}/sintax.db',
+                     'blast_database' : F'{tf}/{db_base}__BLAST',
+                     'rdp_path' : F'{tf}/'}
+    #python "$CONSTAXPATH"/FormatRefDB.py -d "$DB" -t "$TFILES" -f $FORMAT -p "$CONSTAXPATH"
+    format = _detect_format(db)
+    training_dict["format" : format]
+    _format_ref_db(db, tf, format, dup=False)
+    db_base = os.path.basename(db).split(".")[0]
+    print("__________________________________________________________________________\nTraining SINTAX Classifier")
 
-print("__________________________________________________________________________\nTraining SINTAX Classifier")
-
-#  "$SINTAXPATH" -makeudb_usearch "${TFILES}/${base}"__UTAX.fasta -output ${TFILES}/sintax.db
-cmd = ['vsearch', '-makeudb_usearch', utax_fasta, '-output', sintax_db]
-subprocess.run(cmd, check=True)
-
-print("__________________________________________________________________________\nTraining BLAST Classifier")
-# makeblastdb -in "${TFILES}/${base}"__RDP_trained.fasta -dbtype nucl -out "${TFILES}/${base}"__BLAST
-cmd = ['makeblastdb', '-in', rdp_trained_fasta, '-dbtype', 'nucl', '-out', F'{tf_prefix}__BLAST']
-try:
+    #  "$SINTAXPATH" -makeudb_usearch "${TFILES}/${base}"__UTAX.fasta -output ${TFILES}/sintax.db
+    cmd = ['vsearch', '-makeudb_usearch', F'{tf}/{db_base}__UTAX.fasta', '-output', F'{tf}/sintax.db']
     subprocess.run(cmd, check=True)
-except subprocess.CalledProcessError as e:
-    print(str(e))
-print("__________________________________________________________________________\nTraining RDP Classifier")
-#"$RDPPATH" train -o "${TFILES}/." -s "${TFILES}/${base}"__RDP_trained.fasta -t "${TFILES}/${base}"__RDP_taxonomy_trained.txt -Xmx"$MEM"m > rdp_train.out 2>&1
-cmd = ['classifier', 'train', '-o', tfiles, '-s', rdp_trained_fasta, '-t', rdp_trained_taxonomy, F'-Xmx{mem}m']
-rdp_out = subprocess.run(cmd, capture_output = True)
-#Duplicate taxa (a given taxon in more than one higher taxa) occur in some UNITE and SILVA datasets
-if "duplicate taxon name" in rdp_out:
-    print("RDP training error, redoing with duplicate taxa")
-    _format_ref_db(db, tfiles, format, constax_path, dup=True)
-    rdp_out = subprocess.run(cmd, capture_output = True)
-    if len(rdp.stderr.decode('utf-8')) == 0:
-        print("RDP training error overcome, continuing with classification after SINTAX is retrained")
-        cmd = ['vsearch', '-makeudb_usearch', utax_fasta, '-output', sintax_db]
+
+    print("__________________________________________________________________________\nTraining BLAST Classifier")
+    # makeblastdb -in "${TFILES}/${base}"__RDP_trained.fasta -dbtype nucl -out "${TFILES}/${base}"__BLAST
+    cmd = ['makeblastdb', '-in', F'{tf}/{db_base}__RDP_trained.fasta', '-dbtype', 'nucl', '-out', F'{tf}/{db_base}__BLAST']
+    try:
         subprocess.run(cmd, check=True)
-    else:
-        print(rdp.stderr.decode('utf-8'))
-        sys.exit(1)
+    except subprocess.CalledProcessError as e:
+        print(str(e))
+    print("__________________________________________________________________________\nTraining RDP Classifier")
+    #"$RDPPATH" train -o "${TFILES}/." -s "${TFILES}/${base}"__RDP_trained.fasta -t "${TFILES}/${base}"__RDP_taxonomy_trained.txt -Xmx"$MEM"m > rdp_train.out 2>&1
+    cmd = ['classifier', 'train', '-o', F'{tf}/.', '-s', F'{tf}/{db_base}__RDP_trained.fasta', '-t', F'{tf}/{db_base}__RDP_taxonomy_trained.txt', F'-Xmx{mem}m']
+    rdp_out = subprocess.run(cmd, capture_output = True)
+    #Duplicate taxa (a given taxon in more than one higher taxa) occur in some UNITE and SILVA datasets
+    if "duplicate taxon name" in rdp_out:
+        print("RDP training error, redoing with duplicate taxa")
+        _format_ref_db(db, tfiles, format, constax_path, dup=True)
+        rdp_out = subprocess.run(cmd, capture_output = True)
+        if len(rdp.stderr.decode('utf-8')) == 0:
+            print("RDP training error overcome, continuing with classification after SINTAX is retrained")
+            cmd = ['vsearch', '-makeudb_usearch', F'{tf}/{db_base}__UTAX.fasta', '-output', F'{tf}/sintax.db']
+            subprocess.run(cmd, check=True)
+        else:
+            raise RuntimeError("RDP training with duplicate taxa failed:\n" + rdp.stderr.decode('utf-8'))
 
-blast_ver = subprocess.run(['blastn', '-version'], capture_output = True).stdout.decode('utf-8').split("\n")[0].split(" ")[1]
-with open(F"{tfiles}/training_check.txt", "w") as ofile:
-    ofile.write(F"BLAST version {blast_ver}")
+    blast_ver = subprocess.run(['blastn', '-version'], capture_output = True).stdout.decode('utf-8').split("\n")[0].split(" ")[1]
+    training_dict["blast_version"] = blast_ver
 
-plugin.methods.register_function()
+    rdp_version = subprocess.run(['conda', 'list', 'rdptools'], capture_output = True).stdout.decode('utf-8').split("\n")[-2].split()[1]
+    with open(F"{tfiles}/rRNAClassifier.properties", "w") as ofile:
+        ofile.write(F"# Sample ResourceBundle properties file\nbergeyTree=bergeyTrainingTree.xml\n\nprobabilityList=genus_wordConditionalProbList.txt\n\nprobabilityIndex=wordConditionalProbIndexArr.txt\n\nwordPrior=logWordPrior.txt\n\nclassifierVersion=RDP Naive Bayesian rRNA Classifier Version {rdp_version}")
+
+    json.dump(training_dict, F"{tfiles}/training_result.json")
+    training_result = JSONFormat(F"{tfiles}/training_result.json")
+    return training_result
+
+plugin.methods.register_function(
+    function=train,
+    inputs={'db' : FeatureData[Sequence]},
+    parameters={'mem' : Int % Range(0, None),
+                'tf' : Str},
+    outputs=[('training_result', JSONFormat)],
+    input_descriptions={'db' : 'Database to train classifiers, in FASTA format.'},
+    parameter_descriptions={'mem' : 'Memory available for RDP classification, in MB. Must be in range [1, infinity].',
+                            'tf' : 'Path to which training files will be written'},
+    output_descriptions={'classification': 'Taxonomy classifications of query sequences with accompanying statistics and matches to high-level database and/or isolates.'},
+    name='CONSTAX2 consensus taxonomy classifier',
+    description=(),
+    citations=[citations['liber2021constax2']]
+    )

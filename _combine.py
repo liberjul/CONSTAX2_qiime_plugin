@@ -18,10 +18,10 @@ def _reformat_RDP(rdp_file, output_dir, confidence, ranks):
 	output = open(output_file,"w")
 
 	if ranks[0] == "Kingdom":
-		output.write("OTU_ID\tOTU_Score\tKingdom\tK_score\tPhylum\tP_score\tClass\tC_score")
+		output.write("Feature ID\tOTU_Score\tKingdom\tK_score\tPhylum\tP_score\tClass\tC_score")
 		output.write("\tOrder\tO_score\tFamily\tF_score\tGenus\tG_score\tSpecies\tS_score\n")
 	else:
-		output.write("OTU_ID\tOTU_Score")
+		output.write("Feature ID\tOTU_Score")
 		for r in ranks:
 			output.write(F"\t{r}\t{r.replace('ank_', '')}_score")
 		output.write("\n")
@@ -81,10 +81,10 @@ def _reformat_UTAX(utax_file, output_dir, confidence, ranks):
 	output_file = F"{output_dir}/otu_taxonomy_utax_final.txt"
 	output = open(output_file,"w")
 	if ranks[0] == "Kingdom":
-		output.write("OTU_ID\tOTU_Score\tKingdom\tK_score\tPhylum\tP_score\tClass\tC_score")
+		output.write("Feature ID\tOTU_Score\tKingdom\tK_score\tPhylum\tP_score\tClass\tC_score")
 		output.write("\tOrder\tO_score\tFamily\tF_score\tGenus\tG_score\tSpecies\tS_score\n")
 	else:
-		output.write("OTU_ID\tOTU_Score")
+		output.write("Feature ID\tOTU_Score")
 		for r in ranks:
 			output.write(F"\t{r}\t{r.replace('ank_', '')}_score")
 		output.write("\n")
@@ -158,10 +158,10 @@ def _reformat_SINTAX(sintax_file, output_dir, confidence, ranks):
 	output_file = F"{output_dir}/otu_taxonomy_sintax_final.txt"
 	output = open(output_file, "w")
 	if ranks[0] == "Kingdom":
-		output.write("OTU_ID\tOTU_Score\tKingdom\tK_score\tPhylum\tP_score\tClass\tC_score")
+		output.write("Feature ID\tOTU_Score\tKingdom\tK_score\tPhylum\tP_score\tClass\tC_score")
 		output.write("\tOrder\tO_score\tFamily\tF_score\tGenus\tG_score\tSpecies\tS_score\n")
 	else:
-		output.write("OTU_ID\tOTU_Score")
+		output.write("Feature ID\tOTU_Score")
 		for r in ranks:
 			output.write(F"\t{r}\t{r.replace('ank_', '')}_score")
 		output.write("\n")
@@ -262,10 +262,10 @@ def _reformat_SINTAX(sintax_file, output_dir, confidence, ranks):
 def _reformat_BLAST(blast_file, output_dir, confidence, max_hits, ethresh, p_iden_thresh, ranks):
 	output_file = F"{output_dir}/otu_taxonomy_blast_final.txt" # Filename for output
 	if ranks[0] == "Kingdom":
-		classification_buf = "OTU_ID\tOTU_Score\tKingdom\tK_score\tPhylum\tP_score\tClass\tC_score"
+		classification_buf = "Feature ID\tOTU_Score\tKingdom\tK_score\tPhylum\tP_score\tClass\tC_score"
 		classification_buf += "\tOrder\tO_score\tFamily\tF_score\tGenus\tG_score\tSpecies\tS_score\n"
 	else:
-		classification_buf = "OTU_ID\tOTU_Score"
+		classification_buf = "Feature ID\tOTU_Score"
 		for r in ranks:
 			classification_buf += F"\t{r}\t{r.replace('ank_', '')}_score"
 		classification_buf += "\n"
@@ -491,6 +491,22 @@ def _count_classifications(filenames, output_dir, format, rank_count, use_blast=
 
 ################################################################################
 
+def _to_TSVTaxonomyFormat(df):
+	df_cols = list(df.columns)
+	taxon_col = []
+	for i in range(len(df)):
+		j = 7
+		while df.iloc[i, j] == "NaN": # Find lowest classified rank
+			j -= 1
+		if j == 7:
+			taxon_col.append(df.iloc[i, j])
+		else:
+			taxon_col.append(df.iloc[i, j] + " sp.")
+	df["Taxon"] = taxon_col
+	return df[["Feature ID", "Taxon"] + df_cols[1:]]
+
+################################################################################
+
 def _combine_taxonomy(output_dir, conf, tax, evalue, mhits, p_iden, format, db, tf, isolates, iso_qc, iso_id, hl, hl_qc, hl_id, conservative, consistent, blast=True):
     three_classifiers = ["rdp", "sintax", "blast"]
     if format == "UNITE":
@@ -561,9 +577,9 @@ def _combine_taxonomy(output_dir, conf, tax, evalue, mhits, p_iden, format, db, 
     	consensus_file = F"{output_dir}/constax_taxonomy.txt"
     	consensus = open(consensus_file, "w")
     	if isolates == "True":
-    		consensus.write("OTU_ID\tKingdom\tPhylum\tClass\tOrder\tFamily\tGenus\tSpecies\tIsolate\tIsolate_percent_id\tIsolate_query_cover")
+    		consensus.write("Feature ID\tKingdom\tPhylum\tClass\tOrder\tFamily\tGenus\tSpecies\tIsolate\tIsolate_percent_id\tIsolate_query_cover")
     	else:
-    		consensus.write("OTU_ID\tKingdom\tPhylum\tClass\tOrder\tFamily\tGenus\tSpecies")
+    		consensus.write("Feature ID\tKingdom\tPhylum\tClass\tOrder\tFamily\tGenus\tSpecies")
     	if hl != "null":
     		consensus.write("\tHigh_level_taxonomy\tHL_hit_percent_id\tHL_hit_query_cover")
     	if consistent:
@@ -572,7 +588,7 @@ def _combine_taxonomy(output_dir, conf, tax, evalue, mhits, p_iden, format, db, 
     		consensus.write("\n")
     	if blast:
     		combined = open(F"{output_dir}/combined_taxonomy.txt", "w")
-    		combined.write("OTU_ID\tKingdom_RDP\tKingdom_BLAST\tKingdom_SINTAX\tKingdom_Consensus\tPhylum_RDP\tPhylum_BLAST\tPhylum_SINTAX")
+    		combined.write("Feature ID\tKingdom_RDP\tKingdom_BLAST\tKingdom_SINTAX\tKingdom_Consensus\tPhylum_RDP\tPhylum_BLAST\tPhylum_SINTAX")
     		combined.write("\tPhylum_Consensus\tClass_RDP\tClass_BLAST\tClass_SINTAX\tClass_Consensus\tOrder_RDP\tOrder_BLAST\tOrder_SINTAX")
     		combined.write("\tOrder_Consensus\tFamily_RDP\tFamily_BLAST\tFamily_SINTAX\tFamily_Consensus\tGenus_RDP\tGenus_BLAST\tGenus_SINTAX")
     		combined.write("\tGenus_Consensus\tSpecies_RDP\tSpecies_BLAST\tSpecies_SINTAX\tSpecies_Consensus\n")
@@ -614,7 +630,7 @@ def _combine_taxonomy(output_dir, conf, tax, evalue, mhits, p_iden, format, db, 
     		_count_classifications([rdp_file, sin_file, blast_file, consensus_file], output_dir, "UNITE", len(ranks), use_blast=True)
     	else:
     		combined = open(F"{output_dir}/combined_taxonomy.txt", "w")
-    		combined.write("OTU_ID\tKingdom_RDP\tKingdom_SINTAX\tKingdom_UTAX\tKingdom_Consensus\tPhylum_RDP\tPhylum_SINTAX\tPhylum_UTAX")
+    		combined.write("Feature ID\tKingdom_RDP\tKingdom_SINTAX\tKingdom_UTAX\tKingdom_Consensus\tPhylum_RDP\tPhylum_SINTAX\tPhylum_UTAX")
     		combined.write("\tPhylum_Consensus\tClass_RDP\tClass_SINTAX\tClass_UTAX\tClass_Consensus\tOrder_RDP\tOrder_SINTAX\tOrder_UTAX")
     		combined.write("\tOrder_Consensus\tFamily_RDP\tFamily_SINTAX\tFamily_UTAX\tFamily_Consensus\tGenus_RDP\tGenus_SINTAX\tGenus_UTAX")
     		combined.write("\tGenus_Consensus\tSpecies_RDP\tSpecies_SINTAX\tSpecies_UTAX\tSpecies_Consensus\n")
@@ -723,8 +739,8 @@ def _combine_taxonomy(output_dir, conf, tax, evalue, mhits, p_iden, format, db, 
     	consensus = open(consensus_file, "w")
 
     	combined = open(F"{output_dir}/combined_taxonomy.txt", "w")
-    	combined.write("OTU_ID")
-    	consensus.write("OTU_ID")
+    	combined.write("Feature ID")
+    	consensus.write("Feature ID")
 
     	if blast:
     		for r in ranks:
@@ -781,8 +797,8 @@ def _combine_taxonomy(output_dir, conf, tax, evalue, mhits, p_iden, format, db, 
 
     		header_line = open(filename_base + "__RDP_taxonomy.txt", "r").readline()
     		ranks = header_line.strip().split("\t")[1:]
-    		combined.write("OTU_ID")
-    		consensus.write("OTU_ID")
+    		combined.write("Feature ID")
+    		consensus.write("Feature ID")
 
     		for r in ranks:
     			combined.write(F"\t{r}_RDP\t{r}_SINTAX\t{r}_UTAX\t{r}_Consensus")
@@ -833,4 +849,5 @@ def _combine_taxonomy(output_dir, conf, tax, evalue, mhits, p_iden, format, db, 
     		_count_classifications([rdp_file, uta_file, sin_file, consensus_file], output_dir, "SILVA", len(ranks))
     	print("\tDone\n\n")
     	print("____________________________________________________________________\n")
-		return pd.read_table(consensus_file)
+		constax_table = pd.read_table(consensus_file)
+		return _to_TSVTaxonomyFormat(constax_table)
