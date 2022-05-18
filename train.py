@@ -8,13 +8,16 @@
 import subprocess, os, json
 
 from q2_types.feature_data import (FeatureData, Taxonomy, Sequence, DNAIterator, DNAFASTAFormat)
-from qiime2.plugin import Int, Str, Float, Choices, Range, TextFileFormat
+from qiime2.plugin import Int, Str, Float, Choices, Range, TextFileFormat, SemanticType, BinaryFileFormat
 import qiime2.plugin.model as model
 from .plugin_setup import plugin, citations
 from ._format_data import _format_ref_db, _detect_format
 
 # https://github.com/qiime2/q2-types/issues/49
 # From https://github.com/qiime2/q2-feature-classifier/blob/master/q2_feature_classifier/_taxonomic_classifier.py
+
+CONSTAXTaxonomicClassifier = SemanticType('CONSTAXTaxonomicClassifier')
+
 class JSONFormat(model.TextFileFormat):
     def sniff(self):
         with self.open() as fh:
@@ -25,7 +28,35 @@ class JSONFormat(model.TextFileFormat):
                 pass
         return False
 
-def train(db, tf, mem) -> dict:
+class CONSTAXTaxonomicClassifierDirFmt(model.DirectoryFormat):
+    # utax_file = model.File('utax.fasta', format=DNAFASTAFormat)
+    # sintax_file = model.File('sintax.db', format=BinaryFileFormat)
+    # blast_files = model.FileCollection(r'.*__BLAST\.n.*', format=BinaryFileFormat)
+    # rdp_text_files = model.FileCollection(r'.*__RDP.*txt', format=TextFileFormat)
+    # rdp_fastas = model.FileCollection(r'.*__RDP.*fasta', format=DNAFASTAFormat)
+    # rdp_word = model.File('wordConditionalProbIndexArr.txt', format=TextFileFormat)
+    # rdp_genus = model.File('genus_wordConditionalProbList.txt', format=TextFileFormat)
+    # rdp_tree = model.File('bergeyTrainingTree.xml', format=TextFileFormat)
+    # rdp_log = model.File('logWordPrior.txt', format=TextFileFormat)
+    # rdp_prop = model.File('rRNAClassifier.properties', format=TextFileFormat)
+    training_result = model.File('training_result.json', format=JSONFormat)
+
+
+@plugin.register_transformer
+def _1(fmt: JSONFormat) -> dict:
+    with fmt.open() as fh:
+        return json.load(fh)
+
+
+@plugin.register_transformer
+def _2(data: dict) -> JSONFormat:
+    result = JSONFormat()
+    with result.open() as fh:
+        json.dump(data, fh)
+    return result
+
+def train(db : DNAFASTAFormat, tf : str, mem : int) -> dict:
+    db.file.view(DNAFASTAFormat)
     training_dict = {'sintax_database' : F'{tf}/sintax.db',
                      'blast_database' : F'{tf}/{db_base}__BLAST',
                      'rdp_path' : F'{tf}/'}
@@ -74,17 +105,21 @@ def train(db, tf, mem) -> dict:
     training_result = JSONFormat(F"{tfiles}/training_result.json")
     return training_result
 
+plugin.register_semantic_types(CONSTAXTaxonomicClassifier)
+plugin.register_semantic_type_to_format(CONSTAXTaxonomicClassifier,
+    artifact_format = CONSTAXTaxonomicClassifierDirFmt)
+
 plugin.methods.register_function(
     function=train,
     inputs={'db' : FeatureData[Sequence]},
     parameters={'mem' : Int % Range(0, None),
                 'tf' : Str},
-    outputs=[('training_result', JSONFormat)],
+    outputs=[('training_result', CONSTAXTaxonomicClassifier)],
     input_descriptions={'db' : 'Database to train classifiers, in FASTA format.'},
     parameter_descriptions={'mem' : 'Memory available for RDP classification, in MB. Must be in range [1, infinity].',
                             'tf' : 'Path to which training files will be written'},
-    output_descriptions={'classification': 'Taxonomy classifications of query sequences with accompanying statistics and matches to high-level database and/or isolates.'},
+    output_descriptions={'training_result': 'JSON with attributes describing model training to allow for classification.'},
     name='CONSTAX2 consensus taxonomy classifier',
-    description=(),
+    description='Function to train the CONSTAX classifiers on a reference database',
     citations=[citations['liber2021constax2']]
     )

@@ -13,7 +13,7 @@ import CONSTAX2_qiime_plugin
 citations = Citations.load('citations.bib', package='CONSTAX2_qiime_plugin')
 plugin = Plugin(
     name='CONSTAX2',
-    version=CONSTAX2_qiime_plugin.__version__,
+    version='v0.0.1', #CONSTAX2_qiime_plugin.__version__,
     website='https://github.com/liberjul/CONSTAX2_qiime_plugin',
     package='CONSTAX2_qiime_plugin',
     description=('This QIIME 2 plugin provides consensus'

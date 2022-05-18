@@ -9,16 +9,17 @@
 import os
 import pandas as pd
 from q2_types.feature_data import (FeatureData, Taxonomy, Sequence, DNAIterator, DNAFASTAFormat, TSVTaxonomyFormat)
-from qiime2.plugin import Int, Str, Float, Choices, Range
+from qiime2.plugin import Int, Str, Float, Bool, Choices, Range
 from .plugin_setup import plugin, citations
-from .train import JSONFormat
+from .train import CONSTAXTaxonomicClassifier
 from ._format_data import _check_input_names, _split_inputs, _detect_format
 
-def classify(db: DNAFASTAFormat, input: DNAFASTAFormat, training_result: JSONFormat, output_dir: str = 'output', mem: int = 4000, conf: float = 0.8, tax: str = "taxonomy_assignments",
+def classify(db: DNAFASTAFormat, input: DNAFASTAFormat, training_result: str, output_dir: str = 'output', mem: int = 4000, conf: float = 0.8, tax: str = "taxonomy_assignments",
                      nthreads: int = 1, evalue: float = 1., mhits: int = 10, p_iden: float = 0., tf: str = "training_files",
                      isolates: str = "null", iso_qc: int = 75, iso_id: float = 1., hl: str = "null", hl_qc: int = 75, hl_id: float = 1.,
                      conservative: bool = False , consistent: bool = False) -> TSVTaxonomyFormat:
-    train_dict = training_result.open()
+    with open(training_result, "r") as ifile:
+        train_dict = json.load(ifile)
     format = train_dict["format"]
     db = train_dict['blast_database'].strip("__BLAST")
     if not combine_only:
@@ -82,7 +83,7 @@ plugin.methods.register_function(
     function=classify,
     inputs={'db' : FeatureData[Sequence],
             'input': FeatureData[Sequence],
-            'training_result' : JSONFormat},
+            'training_result' : CONSTAXTaxonomicClassifier},
     parameters={'mem': Int % Range(1, None),
                 'conf' : Float % Range(0., 1., inclusive_end=True, inclusive_start=False),
                 'nthreads' : Int % Range(1, None),
@@ -100,9 +101,10 @@ plugin.methods.register_function(
                 'consistent': Bool,
                 'output_dir': Str,
                 'tax': Str},
-    outputs=[('classification', FeatureData[Taxonomy])],
+    outputs=[('consensus_taxonomy', FeatureData[Taxonomy])],
     input_descriptions={'db' : 'Database to train classifiers, in FASTA format.',
-                        'input': 'Input file in FASTA format containing sequence records to classify.'},
+                        'input': 'Input file in FASTA format containing sequence records to classify.',
+                        'training_result' : 'JSON file with attributes describing model training to allow for classification.'},
     parameter_descriptions={'mem' : 'Memory available for RDP classification, in MB. Must be in range [1, infinity].',
                             'conf' : 'Classification confidence threshold. Must be in range (0, 1]',
                             'nthreads' : 'Number of threads to use for parallel computing steps. Must be in range [1, infinity].',
@@ -120,8 +122,8 @@ plugin.methods.register_function(
                             'consistent': 'Show if the consensus taxonomy is consistent with the real hierarchical taxonomy.',
                             'output_dir': 'Output directory for classifications.',
                             'tax': 'Directory for intermediate taxonomy assignments.'},
-    output_descriptions={'classification': 'Taxonomy classifications of query sequences with accompanying statistics and matches to high-level database and/or isolates.'},
+    output_descriptions={'consensus_taxonomy': 'Taxonomy classifications of query sequences with accompanying statistics and matches to high-level database andor isolates.'},
     name='CONSTAX2 consensus taxonomy classifier',
-    description=(),
+    description='Function to run the CONSTAX classifiers on query sequences and return consensus classifications',
     citations=[citations['liber2021constax2']]
     )
