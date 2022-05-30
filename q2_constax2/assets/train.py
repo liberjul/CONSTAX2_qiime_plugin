@@ -29,16 +29,6 @@ class JSONFormat(model.TextFileFormat):
         return False
 
 class CONSTAXTaxonomicClassifierDirFmt(model.DirectoryFormat):
-    # utax_file = model.File('utax.fasta', format=DNAFASTAFormat)
-    # sintax_file = model.File('sintax.db', format=BinaryFileFormat)
-    # blast_files = model.FileCollection(r'.*__BLAST\.n.*', format=BinaryFileFormat)
-    # rdp_text_files = model.FileCollection(r'.*__RDP.*txt', format=TextFileFormat)
-    # rdp_fastas = model.FileCollection(r'.*__RDP.*fasta', format=DNAFASTAFormat)
-    # rdp_word = model.File('wordConditionalProbIndexArr.txt', format=TextFileFormat)
-    # rdp_genus = model.File('genus_wordConditionalProbList.txt', format=TextFileFormat)
-    # rdp_tree = model.File('bergeyTrainingTree.xml', format=TextFileFormat)
-    # rdp_log = model.File('logWordPrior.txt', format=TextFileFormat)
-    # rdp_prop = model.File('rRNAClassifier.properties', format=TextFileFormat)
     training_result = model.File('training_result.json', format=JSONFormat)
 
 
@@ -49,7 +39,12 @@ def _1(fmt: JSONFormat) -> dict:
 
 
 @plugin.register_transformer
-def _2(data: dict) -> JSONFormat:
+def _2(fmt: CONSTAXTaxonomicClassifierDirFmt) -> dict:
+    with fmt.training_result.open() as fh:
+        return json.load(fh)
+
+@plugin.register_transformer
+def _3(data: dict) -> JSONFormat:
     result = JSONFormat()
     with result.open() as fh:
         json.dump(data, fh)
@@ -62,7 +57,7 @@ def train(db : DNAFASTAFormat, tf : str, mem : int) -> dict:
                      'rdp_path' : F'{tf}/'}
     #python "$CONSTAXPATH"/FormatRefDB.py -d "$DB" -t "$TFILES" -f $FORMAT -p "$CONSTAXPATH"
     format = _detect_format(db)
-    training_dict["format" : format]
+    training_dict['format' : format]
     _format_ref_db(db, tf, format, dup=False)
     db_base = os.path.basename(db).split(".")[0]
     print("__________________________________________________________________________\nTraining SINTAX Classifier")
@@ -95,7 +90,7 @@ def train(db : DNAFASTAFormat, tf : str, mem : int) -> dict:
             raise RuntimeError("RDP training with duplicate taxa failed:\n" + rdp.stderr.decode('utf-8'))
 
     blast_ver = subprocess.run(['blastn', '-version'], capture_output = True).stdout.decode('utf-8').split("\n")[0].split(" ")[1]
-    training_dict["blast_version"] = blast_ver
+    training_dict['blast_version'] = blast_ver
 
     rdp_version = subprocess.run(['conda', 'list', 'rdptools'], capture_output = True).stdout.decode('utf-8').split("\n")[-2].split()[1]
     with open(F"{tfiles}/rRNAClassifier.properties", "w") as ofile:
